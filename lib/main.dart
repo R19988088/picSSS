@@ -459,7 +459,7 @@ class _ViewerPageState extends State<ViewerPage> {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onPanStart: (_) => unawaited(_window('drag')),
-      child: const SizedBox(height: 40),
+      child: const SizedBox(height: 60),
     );
   }
 

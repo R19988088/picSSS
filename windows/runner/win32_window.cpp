@@ -42,6 +42,7 @@ constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
+constexpr const wchar_t kWindowStateRegKey[] = L"Software\\picSSS\\Window";
 
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
@@ -88,6 +89,95 @@ void RefreshDwmFrame(HWND window) {
   SetWindowPos(window, nullptr, 0, 0, 0, 0,
                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
                    SWP_NOACTIVATE);
+}
+
+bool ReadWindowStateValue(const wchar_t* name, LONG* value) {
+  DWORD raw = 0;
+  DWORD raw_size = sizeof(raw);
+  LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kWindowStateRegKey, name,
+                               RRF_RT_REG_DWORD, nullptr, &raw, &raw_size);
+  if (result != ERROR_SUCCESS) {
+    return false;
+  }
+  *value = static_cast<LONG>(raw);
+  return true;
+}
+
+void WriteWindowStateValue(HKEY key, const wchar_t* name, LONG value) {
+  DWORD raw = static_cast<DWORD>(value);
+  RegSetValueEx(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&raw),
+                sizeof(raw));
+}
+
+bool IsUsableWindowRect(const RECT& rect) {
+  if (rect.right - rect.left < 320 || rect.bottom - rect.top < 240) {
+    return false;
+  }
+
+  HMONITOR monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONULL);
+  if (!monitor) {
+    return false;
+  }
+
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfo(monitor, &info)) {
+    return false;
+  }
+
+  RECT intersection{};
+  return IntersectRect(&intersection, &rect, &info.rcWork);
+}
+
+bool LoadWindowState(RECT* rect, bool* maximized) {
+  LONG left = 0;
+  LONG top = 0;
+  LONG right = 0;
+  LONG bottom = 0;
+  LONG zoomed = 0;
+  if (!ReadWindowStateValue(L"Left", &left) ||
+      !ReadWindowStateValue(L"Top", &top) ||
+      !ReadWindowStateValue(L"Right", &right) ||
+      !ReadWindowStateValue(L"Bottom", &bottom)) {
+    return false;
+  }
+
+  RECT saved = {left, top, right, bottom};
+  if (!IsUsableWindowRect(saved)) {
+    return false;
+  }
+
+  ReadWindowStateValue(L"Maximized", &zoomed);
+  *rect = saved;
+  *maximized = zoomed != 0;
+  return true;
+}
+
+void SaveWindowState(HWND window) {
+  if (!window || IsIconic(window)) {
+    return;
+  }
+
+  WINDOWPLACEMENT placement{};
+  placement.length = sizeof(placement);
+  if (!GetWindowPlacement(window, &placement)) {
+    return;
+  }
+
+  HKEY key = nullptr;
+  LSTATUS result = RegCreateKeyEx(HKEY_CURRENT_USER, kWindowStateRegKey, 0,
+                                  nullptr, 0, KEY_WRITE, nullptr, &key,
+                                  nullptr);
+  if (result != ERROR_SUCCESS) {
+    return;
+  }
+
+  WriteWindowStateValue(key, L"Left", placement.rcNormalPosition.left);
+  WriteWindowStateValue(key, L"Top", placement.rcNormalPosition.top);
+  WriteWindowStateValue(key, L"Right", placement.rcNormalPosition.right);
+  WriteWindowStateValue(key, L"Bottom", placement.rcNormalPosition.bottom);
+  WriteWindowStateValue(key, L"Maximized", IsZoomed(window) ? 1 : 0);
+  RegCloseKey(key);
 }
 
 }  // namespace
@@ -170,13 +260,27 @@ bool Win32Window::Create(const std::wstring& title,
   HMONITOR monitor = MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
+  int window_x = Scale(origin.x, scale_factor);
+  int window_y = Scale(origin.y, scale_factor);
+  int window_width = Scale(size.width, scale_factor);
+  int window_height = Scale(size.height, scale_factor);
+  restore_maximized_ = false;
+
+  RECT saved_rect{};
+  bool saved_maximized = false;
+  if (LoadWindowState(&saved_rect, &saved_maximized)) {
+    window_x = saved_rect.left;
+    window_y = saved_rect.top;
+    window_width = saved_rect.right - saved_rect.left;
+    window_height = saved_rect.bottom - saved_rect.top;
+    restore_maximized_ = saved_maximized;
+  }
 
   HWND window = CreateWindow(
       window_class, title.c_str(),
       WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
-      nullptr, nullptr, GetModuleHandle(nullptr), this);
+      window_x, window_y, window_width, window_height, nullptr, nullptr,
+      GetModuleHandle(nullptr), this);
 
   if (!window) {
     return false;
@@ -192,7 +296,8 @@ bool Win32Window::Show() {
   if (window_handle_) {
     RefreshDwmFrame(window_handle_);
   }
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_,
+                    restore_maximized_ ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
 }
 
 // static
@@ -222,6 +327,7 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      SaveWindowState(hwnd);
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
@@ -242,6 +348,9 @@ Win32Window::MessageHandler(HWND hwnd,
     }
     case WM_SIZE: {
       ApplyDwmVisuals(hwnd);
+      if (wparam != SIZE_MINIMIZED) {
+        SaveWindowState(hwnd);
+      }
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
@@ -274,6 +383,11 @@ Win32Window::MessageHandler(HWND hwnd,
       if (bottom) return HTBOTTOM;
       return HTCLIENT;
     }
+
+    case WM_EXITSIZEMOVE:
+    case WM_CLOSE:
+      SaveWindowState(hwnd);
+      break;
 
     case WM_ACTIVATE:
       ApplyDwmVisuals(hwnd);

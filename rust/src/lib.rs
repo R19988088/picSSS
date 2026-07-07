@@ -85,7 +85,8 @@ struct MaterializedItem {
 }
 
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "avif", "heic", "heif", "jxl", "ico",
+    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "avif", "heic", "heif", "jxl",
+    "ico", "sssp",
 ];
 
 #[unsafe(no_mangle)]
@@ -184,7 +185,7 @@ fn open_path(path: &Path) -> Result<LibraryPayload, String> {
         return open_rar_like(path);
     }
 
-    if ext == "sssp" || is_image_extension(&ext) {
+    if is_image_extension(&ext) {
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         return open_folder(parent, Some(path));
     }
@@ -262,7 +263,7 @@ fn open_zip(path: &Path) -> Result<LibraryPayload, String> {
 
         let name = entry.name().replace('\\', "/");
         let ext = extension(Path::new(&name));
-        if is_image_extension(&ext) || ext == "sssp" {
+        if is_image_extension(&ext) {
             items.push(ImageItem {
                 id: stable_id(&format!("{}::{name}", path.display())),
                 title: Path::new(&name)
@@ -358,11 +359,24 @@ fn materialize_item_json(json: &str) -> Result<MaterializedItem, String> {
         .ok_or_else(|| "条目缺少 kind".to_string())?;
 
     match kind {
-        "file" | "sssp" => {
+        "file" => {
             let path = value
                 .get("path")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "条目缺少 path".to_string())?;
+            if extension(Path::new(path)) == "sssp" {
+                let item = sssp_item(Path::new(path))?;
+                return Ok(MaterializedItem {
+                    path: item
+                        .preview_path
+                        .clone()
+                        .unwrap_or_else(|| path.to_string()),
+                    preview_path: item.preview_path,
+                    width: item.width,
+                    height: item.height,
+                    notes: Vec::new(),
+                });
+            }
             Ok(MaterializedItem {
                 path: path.to_string(),
                 preview_path: value
@@ -453,9 +467,9 @@ fn sssp_item(path: &Path) -> Result<ImageItem, String> {
             .and_then(|name| name.to_str())
             .unwrap_or("sssp")
             .to_string(),
-        kind: "sssp".to_string(),
+        kind: "file".to_string(),
         format: "sssp".to_string(),
-        path: Some(preview_path.to_string_lossy().to_string()),
+        path: Some(path.to_string_lossy().to_string()),
         archive_path: None,
         entry_name: None,
         preview_path: Some(preview_path.to_string_lossy().to_string()),
