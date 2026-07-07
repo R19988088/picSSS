@@ -207,7 +207,7 @@ fn open_folder(folder: &Path, selected: Option<&Path>) -> Result<LibraryPayload,
 
         let ext = extension(&path);
         if ext == "sssp" {
-            match sssp_item(&path) {
+            match sssp_item(&path, false) {
                 Ok(item) => items.push(item),
                 Err(err) => notes.push(format!("{}: {}", path.display(), err)),
             }
@@ -320,7 +320,7 @@ fn open_rar_like(path: &Path) -> Result<LibraryPayload, String> {
         }
         let ext = extension(path);
         if ext == "sssp" {
-            if let Ok(item) = sssp_item(path) {
+            if let Ok(item) = sssp_item(path, false) {
                 items.push(item);
             }
         } else if is_image_extension(&ext) {
@@ -365,7 +365,7 @@ fn materialize_item_json(json: &str) -> Result<MaterializedItem, String> {
                 .and_then(Value::as_str)
                 .ok_or_else(|| "条目缺少 path".to_string())?;
             if extension(Path::new(path)) == "sssp" {
-                let item = sssp_item(Path::new(path))?;
+                let item = sssp_item(Path::new(path), true)?;
                 return Ok(MaterializedItem {
                     path: item
                         .preview_path
@@ -430,7 +430,7 @@ fn materialize_archive_item(value: &Value) -> Result<MaterializedItem, String> {
     }
 
     if ext == "sssp" {
-        let item = sssp_item(&cache_path)?;
+        let item = sssp_item(&cache_path, true)?;
         return Ok(MaterializedItem {
             path: item
                 .preview_path
@@ -453,12 +453,16 @@ fn materialize_archive_item(value: &Value) -> Result<MaterializedItem, String> {
     })
 }
 
-fn sssp_item(path: &Path) -> Result<ImageItem, String> {
+fn sssp_item(path: &Path, render_preview: bool) -> Result<ImageItem, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("读取 sssp 失败: {err}"))?;
     let value: Value =
         serde_json::from_str(&text).map_err(|err| format!("解析 sssp 失败: {err}"))?;
     let info = sssp_info(&value);
-    let preview_path = render_sssp_preview(path, &value)?;
+    let preview_path = if render_preview {
+        Some(render_sssp_preview(path, &value)?)
+    } else {
+        None
+    };
 
     Ok(ImageItem {
         id: stable_id(&path_fingerprint(path)),
@@ -472,7 +476,7 @@ fn sssp_item(path: &Path) -> Result<ImageItem, String> {
         path: Some(path.to_string_lossy().to_string()),
         archive_path: None,
         entry_name: None,
-        preview_path: Some(preview_path.to_string_lossy().to_string()),
+        preview_path: preview_path.map(|path| path.to_string_lossy().to_string()),
         width: info.canvas_width,
         height: info.canvas_height,
         sssp: Some(info),
@@ -937,6 +941,39 @@ fn extension(path: &Path) -> String {
 
 fn compare_titles(a: &str, b: &str) -> std::cmp::Ordering {
     a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn folder_with_only_sssp_files_keeps_all_items() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder = std::env::temp_dir().join(format!("picsss_sssp_only_{stamp}"));
+        fs::create_dir_all(&folder).unwrap();
+
+        let sssp = r#"{
+            "formatVersion": 1,
+            "width": 120,
+            "height": 80,
+            "layers": []
+        }"#;
+        for index in 1..=3 {
+            fs::write(folder.join(format!("{index:02}.sssp")), sssp).unwrap();
+        }
+
+        let library = open_folder(&folder, None).unwrap();
+        let _ = fs::remove_dir_all(&folder);
+
+        assert_eq!(library.items.len(), 3);
+        assert!(library.items.iter().all(|item| item.kind == "file"));
+        assert!(library.items.iter().all(|item| item.format == "sssp"));
+    }
 }
 
 fn normalize_path(path: &Path) -> String {
