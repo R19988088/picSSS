@@ -70,7 +70,6 @@ jobs:
       - name: Upload Windows portable package
         uses: actions/upload-artifact@v7
         with:
-          archive: false
           name: picSSS_windows_x64_green.7z
           path: artifacts/picSSS_windows_x64_green.7z
           if-no-files-found: error
@@ -129,7 +128,6 @@ jobs:
       - name: Upload macOS dmg
         uses: actions/upload-artifact@v7
         with:
-          archive: false
           name: picSSS_macos.dmg
           path: artifacts/picSSS_macos.dmg
           if-no-files-found: error
