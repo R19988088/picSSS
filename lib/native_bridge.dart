@@ -51,7 +51,7 @@ class PicsssCore {
   }
 
   Map<String, dynamic> _callWithString(_DartStringFn function, String input) {
-    stderr.writeln('[picSSS] ffi call input: $input');
+    _log('ffi call input: $input');
     final nativeInput = input.toNativeUtf8();
     try {
       final output = function(nativeInput);
@@ -65,7 +65,7 @@ class PicsssCore {
     _DartPickFn function, {
     bool allowCancel = false,
   }) {
-    stderr.writeln('[picSSS] ffi call no args');
+    _log('ffi call no args');
     final output = function();
     try {
       return _decodeAndFree(output);
@@ -83,7 +83,7 @@ class PicsssCore {
     }
     try {
       final text = output.toDartString();
-      stderr.writeln('[picSSS] ffi response: $text');
+      _log('ffi response: $text');
       final response = jsonDecode(text) as Map<String, dynamic>;
       if (response['ok'] != true) {
         throw PicsssException((response['error'] as String?) ?? '未知错误');
@@ -140,6 +140,25 @@ class PicsssCore {
 
   static String _join(List<String> parts) {
     return parts.where((part) => part.isNotEmpty).join(Platform.pathSeparator);
+  }
+
+  static void _log(String message) {
+    stderr.writeln('[picSSS] $message');
+    try {
+      final home = Platform.environment['HOME'];
+      if (home == null || home.isEmpty) {
+        return;
+      }
+      final file = File('$home/Library/Logs/picSSS.log');
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(
+        '${DateTime.now().toIso8601String()} [picSSS] $message\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } on Object {
+      // Logging must never affect native calls.
+    }
   }
 }
 

@@ -29,6 +29,21 @@ Future<void> main(List<String> args) async {
 
 void _log(String message) {
   stderr.writeln('[picSSS] $message');
+  try {
+    final home = Platform.environment['HOME'];
+    if (home == null || home.isEmpty) {
+      return;
+    }
+    final file = File('$home/Library/Logs/picSSS.log');
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(
+      '${DateTime.now().toIso8601String()} [picSSS] $message\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } on Object {
+    // Logging must never affect image loading.
+  }
 }
 
 class PicsssApp extends StatelessWidget {
