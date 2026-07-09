@@ -13,7 +13,9 @@ typedef _DartFreeFn = void Function(ffi.Pointer<Utf8>);
 
 class PicsssCore {
   PicsssCore._() {
+    _log('PicsssCore init start');
     final library = _loadLibrary();
+    _log('PicsssCore library loaded');
     _openPath = library.lookupFunction<_NativeStringFn, _DartStringFn>(
       'picsss_open_path',
     );
@@ -26,6 +28,7 @@ class PicsssCore {
     _freeString = library.lookupFunction<_NativeFreeFn, _DartFreeFn>(
       'picsss_free_string',
     );
+    _log('PicsssCore symbols loaded');
   }
 
   static final PicsssCore instance = PicsssCore._();
@@ -116,8 +119,10 @@ class PicsssCore {
     ];
 
     for (final candidate in candidates) {
+      _log('try dylib: $candidate');
       final file = File(candidate);
       if (file.existsSync()) {
+        _log('open dylib: ${file.absolute.path}');
         _cachedLibrary = ffi.DynamicLibrary.open(file.absolute.path);
         return _cachedLibrary!;
       }

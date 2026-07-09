@@ -12,7 +12,9 @@ import 'native_bridge.dart';
 const _windowChannel = MethodChannel('picsss/window');
 
 Future<void> main(List<String> args) async {
+  _log('main start args=$args executable=${Platform.resolvedExecutable}');
   WidgetsFlutterBinding.ensureInitialized();
+  _log('widgets binding ready');
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     _log('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
@@ -22,7 +24,10 @@ Future<void> main(List<String> args) async {
     return false;
   };
   runZonedGuarded(
-    () => runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first)),
+    () {
+      _log('runApp start');
+      runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first));
+    },
     (error, stack) => _log('Zone error: $error\n$stack'),
   );
 }
@@ -53,6 +58,7 @@ class PicsssApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    _log('PicsssApp build');
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'picSSS',
@@ -82,9 +88,9 @@ class ViewerPage extends StatefulWidget {
 class _ViewerPageState extends State<ViewerPage> {
   final _focusNode = FocusNode();
   final _thumbnailController = ScrollController();
-  final _core = PicsssCore.instance;
   final _materialized = <String, Future<MaterializedImage>>{};
 
+  PicsssCore? _core;
   ImageLibrary? _library;
   int _index = 0;
   String? _error;
@@ -101,6 +107,16 @@ class _ViewerPageState extends State<ViewerPage> {
   @override
   void initState() {
     super.initState();
+    _log('ViewerPage initState');
+    try {
+      _core = PicsssCore.instance;
+      _log('Rust core ready');
+    } on Object catch (error, stack) {
+      _log('Rust core init error: $error\n$stack');
+      _busy = false;
+      _error = '$error';
+      return;
+    }
     unawaited(_boot());
   }
 
@@ -113,11 +129,14 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Future<void> _boot() async {
+    _log('boot start initialPath=${widget.initialPath ?? "<none>"} cwd=${Directory.current.path}');
     final path = widget.initialPath ?? _samplePath();
     if (path == null) {
+      _log('boot no startup path');
       setState(() => _busy = false);
       return;
     }
+    _log('boot opening startup path=$path');
     await _openPath(path);
   }
 
@@ -130,9 +149,14 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Future<void> _pickAndOpen() async {
+    final core = _core;
+    if (core == null) {
+      setState(() => _error = 'Rust 核心未初始化');
+      return;
+    }
     try {
       _log('pick start');
-      final path = _core.pickPath();
+      final path = core.pickPath();
       _log('pick result: ${path ?? "<cancel>"}');
       if (path != null) {
         await _openPath(path);
@@ -144,6 +168,11 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Future<void> _openPath(String path) async {
+    final core = _core;
+    if (core == null) {
+      setState(() => _error = 'Rust 核心未初始化');
+      return;
+    }
     _log('openPath start: $path');
     setState(() {
       _busy = true;
@@ -151,7 +180,7 @@ class _ViewerPageState extends State<ViewerPage> {
       _materialized.clear();
     });
     try {
-      final library = await Future(() => _core.openPath(path));
+      final library = await Future(() => core.openPath(path));
       _log('openPath ok: kind=${library.kind}, items=${library.items.length}, selected=${library.selectedIndex}');
       if (!mounted) {
         return;
@@ -187,6 +216,10 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Future<MaterializedImage> _materialize(int index) {
+    final core = _core;
+    if (core == null) {
+      return Future.error('Rust 核心未初始化');
+    }
     final library = _library;
     if (library == null || index < 0 || index >= library.items.length) {
       return Future.error('没有可显示的图片');
@@ -196,7 +229,7 @@ class _ViewerPageState extends State<ViewerPage> {
       entry.id,
       () => Future(() {
         _log('materialize start: index=$index id=${entry.id} title=${entry.title}');
-        final image = _core.materialize(entry);
+        final image = core.materialize(entry);
         _log('materialize ok: index=$index path=${image.path} preview=${image.previewPath ?? "<none>"}');
         return image;
       }),
@@ -396,6 +429,7 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   Widget build(BuildContext context) {
+    _log('ViewerPage build busy=$_busy hasLibrary=${_library != null} error=${_error ?? "<none>"}');
     return Focus(
       autofocus: true,
       focusNode: _focusNode,
@@ -413,7 +447,9 @@ class _ViewerPageState extends State<ViewerPage> {
               cursor: SystemMouseCursors.basic,
               onHover: (event) => _handleHover(event, size),
               onExit: (_) {
-                setState(() => _showControls = false);
+                if (_library != null) {
+                  setState(() => _showControls = false);
+                }
                 _scheduleThumbnailHide();
               },
               child: GestureDetector(
@@ -573,11 +609,12 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Widget _buildWindowControls() {
     final isMac = Platform.isMacOS;
+    final controlsVisible = _showControls || _library == null;
     final child = AnimatedOpacity(
-      opacity: _showControls ? 1 : 0,
+      opacity: controlsVisible ? 1 : 0,
       duration: const Duration(milliseconds: 160),
       child: IgnorePointer(
-        ignoring: !_showControls,
+        ignoring: !controlsVisible,
         child: Container(
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
