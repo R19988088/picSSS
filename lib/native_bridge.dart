@@ -51,6 +51,7 @@ class PicsssCore {
   }
 
   Map<String, dynamic> _callWithString(_DartStringFn function, String input) {
+    stderr.writeln('[picSSS] ffi call input: $input');
     final nativeInput = input.toNativeUtf8();
     try {
       final output = function(nativeInput);
@@ -64,6 +65,7 @@ class PicsssCore {
     _DartPickFn function, {
     bool allowCancel = false,
   }) {
+    stderr.writeln('[picSSS] ffi call no args');
     final output = function();
     try {
       return _decodeAndFree(output);
@@ -81,6 +83,7 @@ class PicsssCore {
     }
     try {
       final text = output.toDartString();
+      stderr.writeln('[picSSS] ffi response: $text');
       final response = jsonDecode(text) as Map<String, dynamic>;
       if (response['ok'] != true) {
         throw PicsssException((response['error'] as String?) ?? '未知错误');

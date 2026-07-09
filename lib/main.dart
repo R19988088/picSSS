@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,22 @@ const _windowChannel = MethodChannel('picsss/window');
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first));
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    _log('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
+  };
+  ui.PlatformDispatcher.instance.onError = (error, stack) {
+    _log('PlatformDispatcher error: $error\n$stack');
+    return false;
+  };
+  runZonedGuarded(
+    () => runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first)),
+    (error, stack) => _log('Zone error: $error\n$stack'),
+  );
+}
+
+void _log(String message) {
+  stderr.writeln('[picSSS] $message');
 }
 
 class PicsssApp extends StatelessWidget {
@@ -100,16 +116,20 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<void> _pickAndOpen() async {
     try {
+      _log('pick start');
       final path = _core.pickPath();
+      _log('pick result: ${path ?? "<cancel>"}');
       if (path != null) {
         await _openPath(path);
       }
     } on Object catch (error) {
+      _log('pick error: $error');
       setState(() => _error = '$error');
     }
   }
 
   Future<void> _openPath(String path) async {
+    _log('openPath start: $path');
     setState(() {
       _busy = true;
       _error = null;
@@ -117,6 +137,7 @@ class _ViewerPageState extends State<ViewerPage> {
     });
     try {
       final library = await Future(() => _core.openPath(path));
+      _log('openPath ok: kind=${library.kind}, items=${library.items.length}, selected=${library.selectedIndex}');
       if (!mounted) {
         return;
       }
@@ -130,6 +151,7 @@ class _ViewerPageState extends State<ViewerPage> {
       });
       _warmAround(_index);
     } on Object catch (error) {
+      _log('openPath error: $error');
       if (!mounted) {
         return;
       }
@@ -157,7 +179,12 @@ class _ViewerPageState extends State<ViewerPage> {
     final entry = library.items[index];
     return _materialized.putIfAbsent(
       entry.id,
-      () => Future(() => _core.materialize(entry)),
+      () => Future(() {
+        _log('materialize start: index=$index id=${entry.id} title=${entry.title}');
+        final image = _core.materialize(entry);
+        _log('materialize ok: index=$index path=${image.path} preview=${image.previewPath ?? "<none>"}');
+        return image;
+      }),
     );
   }
 
@@ -419,6 +446,7 @@ class _ViewerPageState extends State<ViewerPage> {
       future: _materialize(_index),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
+          _log('stage FutureBuilder error: ${snapshot.error}\n${snapshot.stackTrace}');
           return Center(child: _GlassText(text: '${snapshot.error}'));
         }
         final image = snapshot.data;
@@ -442,6 +470,7 @@ class _ViewerPageState extends State<ViewerPage> {
                 filterQuality: FilterQuality.high,
                 gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) {
+                  _log('stage Image.file error: path=${image.path} error=$error\n$stackTrace');
                   return ColoredBox(
                     color: const Color(0xff101318),
                     child: Center(child: _GlassText(text: '图片解码失败：$error')),
@@ -752,6 +781,9 @@ class _ThumbTile extends StatelessWidget {
               child: FutureBuilder<MaterializedImage>(
                 future: future,
                 builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    _log('thumb FutureBuilder error: title=$title error=${snapshot.error}\n${snapshot.stackTrace}');
+                  }
                   final image = snapshot.data;
                   if (image == null) {
                     return const ColoredBox(
@@ -771,6 +803,7 @@ class _ThumbTile extends StatelessWidget {
                     cacheWidth: 220,
                     filterQuality: FilterQuality.medium,
                     errorBuilder: (context, error, stackTrace) {
+                      _log('thumb Image.file error: title=$title path=${image.previewPath ?? image.path} error=$error\n$stackTrace');
                       return const ColoredBox(color: Color(0xff20262d));
                     },
                   );
