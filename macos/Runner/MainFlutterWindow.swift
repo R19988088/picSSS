@@ -75,7 +75,9 @@ class MainFlutterWindow: NSWindow {
         self.zoom(nil)
         result(nil)
       case "drag":
-        self.performDrag(with: NSApp.currentEvent)
+        if let event = NSApp.currentEvent {
+          self.performDrag(with: event)
+        }
         result(nil)
       default:
         result(FlutterMethodNotImplemented)
