@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'native_bridge.dart';
 
 const _windowChannel = MethodChannel('picsss/window');
+const _nativeImageChannel = MethodChannel('picsss/native_image');
 
 Future<void> main(List<String> args) async {
   _log('main start args=$args executable=${Platform.resolvedExecutable}');
@@ -122,6 +123,9 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   void dispose() {
+    if (Platform.isMacOS) {
+      unawaited(_clearNativeImage());
+    }
     _thumbnailHideTimer?.cancel();
     _thumbnailController.dispose();
     _focusNode.dispose();
@@ -237,6 +241,9 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   void _warmAround(int center) {
+    if (Platform.isMacOS) {
+      return;
+    }
     final library = _library;
     if (library == null) {
       return;
@@ -264,6 +271,34 @@ class _ViewerPageState extends State<ViewerPage> {
               .catchError((_) {}),
         );
       }
+    }
+  }
+
+  Future<void> _showNativeImage(MaterializedImage image) async {
+    if (!Platform.isMacOS) {
+      return;
+    }
+    try {
+      await _nativeImageChannel.invokeMethod<void>('show', {
+        'path': image.path,
+        'fill': _fillMode,
+        'scale': _scale,
+        'rotation': _rotation,
+        'panX': _pan.dx,
+        'panY': _pan.dy,
+      });
+      _log('native image show: ${image.path}');
+    } on Object catch (error, stack) {
+      _log('native image show error: $error\n$stack');
+    }
+  }
+
+  Future<void> _clearNativeImage() async {
+    try {
+      await _nativeImageChannel.invokeMethod<void>('clear');
+      _log('native image clear');
+    } on Object catch (error, stack) {
+      _log('native image clear error: $error\n$stack');
     }
   }
 
@@ -457,7 +492,9 @@ class _ViewerPageState extends State<ViewerPage> {
                 onPanUpdate: _handlePanUpdate,
                 onDoubleTap: () => setState(() => _fillMode = !_fillMode),
                 child: Scaffold(
-                  backgroundColor: const Color(0xff080a0d),
+                  backgroundColor: Platform.isMacOS && _library != null
+                      ? Colors.transparent
+                      : const Color(0xff080a0d),
                   body: Stack(
                     children: [
                       Positioned.fill(child: _buildImageStage()),
@@ -505,6 +542,12 @@ class _ViewerPageState extends State<ViewerPage> {
           return const SizedBox.shrink();
         }
 
+        if (Platform.isMacOS) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            unawaited(_showNativeImage(image));
+          });
+          return const SizedBox.expand();
+        }
         final entry = library.items[_index];
         return Transform.translate(
           offset: _pan,
@@ -848,6 +891,9 @@ class _ThumbTile extends StatelessWidget {
                         ),
                       ),
                     );
+                  }
+                  if (Platform.isMacOS) {
+                    return const ColoredBox(color: Color(0x3310151b));
                   }
                   return Image.file(
                     File(image.previewPath ?? image.path),
