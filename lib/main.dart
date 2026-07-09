@@ -13,24 +13,21 @@ const _windowChannel = MethodChannel('picsss/window');
 const _nativeImageChannel = MethodChannel('picsss/native_image');
 
 Future<void> main(List<String> args) async {
-  _log('main start args=$args executable=${Platform.resolvedExecutable}');
-  WidgetsFlutterBinding.ensureInitialized();
-  _log('widgets binding ready');
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
-    _log('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
-  };
-  ui.PlatformDispatcher.instance.onError = (error, stack) {
-    _log('PlatformDispatcher error: $error\n$stack');
-    return false;
-  };
-  runZonedGuarded(
-    () {
-      _log('runApp start');
-      runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first));
-    },
-    (error, stack) => _log('Zone error: $error\n$stack'),
-  );
+  runZonedGuarded(() {
+    _log('main start args=$args executable=${Platform.resolvedExecutable}');
+    WidgetsFlutterBinding.ensureInitialized();
+    _log('widgets binding ready');
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      _log('FlutterError: ${details.exceptionAsString()}\n${details.stack}');
+    };
+    ui.PlatformDispatcher.instance.onError = (error, stack) {
+      _log('PlatformDispatcher error: $error\n$stack');
+      return false;
+    };
+    _log('runApp start');
+    runApp(PicsssApp(initialPath: args.isEmpty ? null : args.first));
+  }, (error, stack) => _log('Zone error: $error\n$stack'));
 }
 
 void _log(String message) {
@@ -102,6 +99,7 @@ class _ViewerPageState extends State<ViewerPage> {
   double _scale = 1;
   double _rotation = 0;
   Offset _pan = Offset.zero;
+  String? _nativeImageStateKey;
   DateTime? _lastEsc;
   Timer? _thumbnailHideTimer;
 
@@ -133,7 +131,9 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Future<void> _boot() async {
-    _log('boot start initialPath=${widget.initialPath ?? "<none>"} cwd=${Directory.current.path}');
+    _log(
+      'boot start initialPath=${widget.initialPath ?? "<none>"} cwd=${Directory.current.path}',
+    );
     final path = widget.initialPath ?? _samplePath();
     if (path == null) {
       _log('boot no startup path');
@@ -185,7 +185,9 @@ class _ViewerPageState extends State<ViewerPage> {
     });
     try {
       final library = await Future(() => core.openPath(path));
-      _log('openPath ok: kind=${library.kind}, items=${library.items.length}, selected=${library.selectedIndex}');
+      _log(
+        'openPath ok: kind=${library.kind}, items=${library.items.length}, selected=${library.selectedIndex}',
+      );
       if (!mounted) {
         return;
       }
@@ -217,6 +219,7 @@ class _ViewerPageState extends State<ViewerPage> {
     if (!keepFillMode) {
       _fillMode = false;
     }
+    _nativeImageStateKey = null;
   }
 
   Future<MaterializedImage> _materialize(int index) {
@@ -232,18 +235,19 @@ class _ViewerPageState extends State<ViewerPage> {
     return _materialized.putIfAbsent(
       entry.id,
       () => Future(() {
-        _log('materialize start: index=$index id=${entry.id} title=${entry.title}');
+        _log(
+          'materialize start: index=$index id=${entry.id} title=${entry.title}',
+        );
         final image = core.materialize(entry);
-        _log('materialize ok: index=$index path=${image.path} preview=${image.previewPath ?? "<none>"}');
+        _log(
+          'materialize ok: index=$index path=${image.path} preview=${image.previewPath ?? "<none>"}',
+        );
         return image;
       }),
     );
   }
 
   void _warmAround(int center) {
-    if (Platform.isMacOS) {
-      return;
-    }
     final library = _library;
     if (library == null) {
       return;
@@ -278,6 +282,18 @@ class _ViewerPageState extends State<ViewerPage> {
     if (!Platform.isMacOS) {
       return;
     }
+    final stateKey = [
+      image.path,
+      _fillMode,
+      _scale.toStringAsFixed(4),
+      _rotation.toStringAsFixed(4),
+      _pan.dx.toStringAsFixed(2),
+      _pan.dy.toStringAsFixed(2),
+    ].join('|');
+    if (_nativeImageStateKey == stateKey) {
+      return;
+    }
+    _nativeImageStateKey = stateKey;
     try {
       await _nativeImageChannel.invokeMethod<void>('show', {
         'path': image.path,
@@ -289,12 +305,14 @@ class _ViewerPageState extends State<ViewerPage> {
       });
       _log('native image show: ${image.path}');
     } on Object catch (error, stack) {
+      _nativeImageStateKey = null;
       _log('native image show error: $error\n$stack');
     }
   }
 
   Future<void> _clearNativeImage() async {
     try {
+      _nativeImageStateKey = null;
       await _nativeImageChannel.invokeMethod<void>('clear');
       _log('native image clear');
     } on Object catch (error, stack) {
@@ -464,7 +482,9 @@ class _ViewerPageState extends State<ViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    _log('ViewerPage build busy=$_busy hasLibrary=${_library != null} error=${_error ?? "<none>"}');
+    _log(
+      'ViewerPage build busy=$_busy hasLibrary=${_library != null} error=${_error ?? "<none>"}',
+    );
     return Focus(
       autofocus: true,
       focusNode: _focusNode,
@@ -534,7 +554,9 @@ class _ViewerPageState extends State<ViewerPage> {
       future: _materialize(_index),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          _log('stage FutureBuilder error: ${snapshot.error}\n${snapshot.stackTrace}');
+          _log(
+            'stage FutureBuilder error: ${snapshot.error}\n${snapshot.stackTrace}',
+          );
           return Center(child: _GlassText(text: '${snapshot.error}'));
         }
         final image = snapshot.data;
@@ -564,7 +586,9 @@ class _ViewerPageState extends State<ViewerPage> {
                 filterQuality: FilterQuality.high,
                 gaplessPlayback: true,
                 errorBuilder: (context, error, stackTrace) {
-                  _log('stage Image.file error: path=${image.path} error=$error\n$stackTrace');
+                  _log(
+                    'stage Image.file error: path=${image.path} error=$error\n$stackTrace',
+                  );
                   return ColoredBox(
                     color: const Color(0xff101318),
                     child: Center(child: _GlassText(text: '图片解码失败：$error')),
@@ -877,7 +901,9 @@ class _ThumbTile extends StatelessWidget {
                 future: future,
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
-                    _log('thumb FutureBuilder error: title=$title error=${snapshot.error}\n${snapshot.stackTrace}');
+                    _log(
+                      'thumb FutureBuilder error: title=$title error=${snapshot.error}\n${snapshot.stackTrace}',
+                    );
                   }
                   final image = snapshot.data;
                   if (image == null) {
@@ -892,16 +918,15 @@ class _ThumbTile extends StatelessWidget {
                       ),
                     );
                   }
-                  if (Platform.isMacOS) {
-                    return const ColoredBox(color: Color(0x3310151b));
-                  }
                   return Image.file(
                     File(image.previewPath ?? image.path),
                     fit: BoxFit.cover,
                     cacheWidth: 220,
                     filterQuality: FilterQuality.medium,
                     errorBuilder: (context, error, stackTrace) {
-                      _log('thumb Image.file error: title=$title path=${image.previewPath ?? image.path} error=$error\n$stackTrace');
+                      _log(
+                        'thumb Image.file error: title=$title path=${image.previewPath ?? image.path} error=$error\n$stackTrace',
+                      );
                       return const ColoredBox(color: Color(0xff20262d));
                     },
                   );
